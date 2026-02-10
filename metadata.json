@@ -1,0 +1,7 @@
+{
+  "name": "Edu-Metric AI",
+  "description": "A smart academic diagnosis system that analyzes student performance at the topic and cognitive level (Bloom's Taxonomy) using Gemini AI for insights and remediation.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

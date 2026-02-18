@@ -108,7 +108,10 @@ const RemedialPack: React.FC<RemedialPackProps> = ({ preTopic }) => {
             </section>
 
             <div className="flex justify-center pt-8 border-t border-white/5">
-              <button className="px-8 py-3 glass hover:bg-white/5 rounded-xl font-bold text-white border-white/20 transition-all flex items-center space-x-2">
+              <button
+                onClick={() => window.print()}
+                className="px-8 py-3 glass hover:bg-white/5 rounded-xl font-bold text-white border-white/20 transition-all flex items-center space-x-2"
+              >
                 <i className="fa-solid fa-print"></i>
                 <span>Print Remedial Handout</span>
               </button>

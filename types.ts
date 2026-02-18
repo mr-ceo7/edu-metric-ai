@@ -14,7 +14,7 @@ export interface Question {
   subTopic: string;
   cognitiveLevel: CognitiveLevel;
   maxScore: number;
-  questionText?: string;
+  questionText: string;
   pageNumber?: number; // Which page of the booklet this question appears on
 }
 
@@ -69,21 +69,13 @@ export interface CornerQRData {
   isFinalPage: boolean;
 }
 
-export interface QuestionQRData {
-  type: 'question';
-  questionId: number;
-  topic: string;
-  concept: string;
-  maxScore: number;
-  questionText: string;
-}
 
 export interface ScanRecord {
   id: string;
   imageDataUrl: string; // Base64 image stored as evidence
   timestamp: number;
   cornerData: CornerQRData | null;
-  questions: QuestionQRData[];
+  pageNumber: number; // Which page was scanned (from corner QR or manual selection)
   extractedScores: Record<number, number>; // questionId -> score
   confirmed: boolean;
 }

@@ -13,7 +13,8 @@ export default defineConfig(({ mode }) => {
       plugins: [react(), tailwindcss()],
       define: {
         'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
+        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
+        'process.env.CUSTOM_API_URL': JSON.stringify(env.CUSTOM_API_URL || 'http://localhost:5000')
       },
       resolve: {
         alias: {

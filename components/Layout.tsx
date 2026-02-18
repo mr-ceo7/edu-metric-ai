@@ -111,6 +111,12 @@ const Layout: React.FC<LayoutProps> = ({ children, activeTab, setActiveTab, conf
           
           {children}
         </div>
+        
+        <footer className="py-6 text-center text-[10px] text-slate-600 font-medium border-t border-white/5 mx-8 mt-auto">
+          <p>
+            &copy; {new Date().getFullYear()} @KISII SCHOOL SCIENCE AND ENGINEERING DEP. <span className="text-indigo-900/50">|</span> Galvaniy Technologies
+          </p>
+        </footer>
       </main>
 
       {/* Mobile Bottom Navigation */}

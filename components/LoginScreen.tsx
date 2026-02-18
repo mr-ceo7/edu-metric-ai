@@ -2,9 +2,10 @@ import React, { useState } from 'react';
 
 interface LoginScreenProps {
   onLogin: (config: { school: string; subject: string; level: string }) => void;
+  onDemoLogin?: () => void;
 }
 
-const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
+const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, onDemoLogin }) => {
   const [password, setPassword] = useState('');
   const [subject, setSubject] = useState('Mathematics');
   const [level, setLevel] = useState('Form 4');
@@ -120,8 +121,19 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
             <span>Access Platform</span>
           </button>
 
+          {onDemoLogin && (
+            <button
+              type="button"
+              onClick={onDemoLogin}
+              className="w-full py-3 bg-emerald-600/10 hover:bg-emerald-600/20 border border-emerald-500/30 rounded-xl text-emerald-400 font-bold text-sm transition-all duration-200 active:scale-[0.98] flex items-center justify-center space-x-2 group"
+            >
+              <i className="fa-solid fa-play group-hover:scale-110 transition-transform"></i>
+              <span>Launch KSEF Demo Mode</span>
+            </button>
+          )}
+
           <p className="text-center text-slate-600 text-[11px]">
-            Powered by Google Gemini AI
+            Powered by  Galvaniy AI
           </p>
         </form>
       </div>

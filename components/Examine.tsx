@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { ExamSession, Question, StudentInfo, CognitiveLevel, AppConfig } from '../types';
 import { createNewSession, saveSession } from '../services/storageService';
+import { generateExamQuestions } from '../services/geminiService';
 
 interface ExamineProps {
   config: AppConfig;
@@ -19,6 +20,10 @@ const Examine: React.FC<ExamineProps> = ({ config, session, onSessionCreated, on
   const [csvInput, setCsvInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [pdfReady, setPdfReady] = useState(false);
+  const [showAutoModal, setShowAutoModal] = useState(false);
+  const [autoTopic, setAutoTopic] = useState('');
+  const [autoSubTopic, setAutoSubTopic] = useState('');
+  const [autoCount, setAutoCount] = useState(5);
 
   // New question form state
   const [newQ, setNewQ] = useState({
@@ -51,6 +56,31 @@ const Examine: React.FC<ExamineProps> = ({ config, session, onSessionCreated, on
 
   const removeQuestion = (idx: number) => {
     setQuestions(questions.filter((_, i) => i !== idx));
+  };
+
+  const handleAutoGenerate = async () => {
+    if (!autoTopic || !autoSubTopic) return;
+    setIsGenerating(true);
+    try {
+      const newQuestions = await generateExamQuestions(autoTopic, autoSubTopic, autoCount);
+      const startId = questions.length > 0 ? Math.max(...questions.map(q => q.id)) + 1 : 1;
+      
+      const processedQuestions = newQuestions.map((q, i) => ({
+        ...q,
+        id: startId + i,
+        pageNumber: 1 // Default to page 1, user can adjust
+      }));
+      
+      setQuestions([...questions, ...processedQuestions]);
+      setShowAutoModal(false);
+      setAutoTopic('');
+      setAutoSubTopic('');
+    } catch (err) {
+      console.error(err);
+      alert('Failed to generate questions. Please try again.');
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   // ---- Step 2: Students ----
@@ -211,9 +241,18 @@ const Examine: React.FC<ExamineProps> = ({ config, session, onSessionCreated, on
         <div className="space-y-4 animate-fade-in">
           {/* Add Question Form */}
           <div className="glass-card">
-            <h3 className="text-lg font-bold text-white mb-4 flex items-center">
-              <i className="fa-solid fa-plus-circle text-indigo-400 mr-3"></i>
-              Add Question
+            <h3 className="text-lg font-bold text-white mb-4 flex items-center justify-between">
+              <div className="flex items-center">
+                <i className="fa-solid fa-plus-circle text-indigo-400 mr-3"></i>
+                Add Question
+              </div>
+              <button
+                onClick={() => setShowAutoModal(true)}
+                className="px-3 py-1.5 bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 rounded-lg text-xs font-bold border border-purple-500/30 flex items-center space-x-2 transition-all"
+              >
+                <i className="fa-solid fa-wand-magic-sparkles"></i>
+                <span>Auto-Generate</span>
+              </button>
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
@@ -517,26 +556,23 @@ const Examine: React.FC<ExamineProps> = ({ config, session, onSessionCreated, on
                 {/* Sample question blocks */}
                 {(questionsPerPage[1] || questions.slice(0, 2)).slice(0, 2).map((q, i) => (
                   <div key={i} className="mb-4 border border-slate-200 rounded-lg p-3">
-                    <div className="flex items-start space-x-2">
-                      <div className="w-8 h-8 border border-indigo-400 rounded bg-indigo-50 flex items-center justify-center shrink-0">
-                        <span className="text-[7px] text-indigo-600 font-bold">QR</span>
-                      </div>
-                      <div className="flex-1">
-                        <p className="text-slate-800 text-xs font-bold">Q{q.id}. {q.questionText || q.subTopic}</p>
-                        <p className="text-slate-400 text-[10px]">{q.topic} • {q.maxScore} marks</p>
-                        {/* OMR Strip */}
-                        <div className="flex items-center space-x-1 mt-2">
-                          <span className="text-[8px] text-slate-500 font-bold mr-1">Score:</span>
-                          {Array.from({ length: q.maxScore + 1 }, (_, n) => (
-                            <div key={n} className="w-4 h-4 rounded-full border border-slate-300 flex items-center justify-center">
-                              <span className="text-[7px] text-slate-400">{n}</span>
-                            </div>
-                          ))}
-                        </div>
+                    <div>
+                      <p className="text-slate-800 text-xs font-bold">Q{q.id}. {q.questionText || q.subTopic}</p>
+                      <p className="text-slate-400 text-[10px]">{q.topic} • {q.maxScore} marks</p>
+                      {/* OMR Strip */}
+                      <div className="flex items-center space-x-1 mt-2">
+                        <span className="text-[8px] text-slate-500 font-bold mr-1">Score:</span>
+                        {Array.from({ length: q.maxScore + 1 }, (_, n) => (
+                          <div key={n} className="w-4 h-4 rounded-full border border-slate-300 flex items-center justify-center">
+                            <span className="text-[7px] text-slate-400">{n}</span>
+                          </div>
+                        ))}
                       </div>
                     </div>
-                    <div className="mt-2 border-t border-dashed border-slate-200 pt-2">
-                      <div className="h-6 bg-slate-50 rounded border border-slate-100"></div>
+                    {/* Answer writing area */}
+                    <div className="mt-2 border-t border-dashed border-slate-200 pt-2 space-y-1">
+                      <div className="h-5 bg-slate-50 rounded border border-slate-100"></div>
+                      <div className="h-5 bg-slate-50 rounded border border-slate-100"></div>
                     </div>
                   </div>
                 ))}
@@ -576,6 +612,79 @@ const Examine: React.FC<ExamineProps> = ({ config, session, onSessionCreated, on
             <button onClick={() => setStep(2)} className="text-slate-500 text-sm font-semibold hover:text-white transition-colors">
               <i className="fa-solid fa-arrow-left mr-2"></i>Back to Students
             </button>
+          </div>
+        </div>
+      )}
+      {/* Auto-Generate Modal */}
+      {showAutoModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="glass-card w-full max-w-md relative animate-slide-up">
+            <button 
+              onClick={() => setShowAutoModal(false)}
+              className="absolute top-4 right-4 text-slate-500 hover:text-white"
+            >
+              <i className="fa-solid fa-xmark text-lg"></i>
+            </button>
+            
+            <h3 className="text-xl font-black text-white mb-1 flex items-center">
+              <i className="fa-solid fa-wand-magic-sparkles text-purple-400 mr-3"></i>
+              AI Question Generator
+            </h3>
+            <p className="text-slate-400 text-xs mb-6">Enter a topic and let AI create questions for you.</p>
+            
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-[10px] text-indigo-400 uppercase font-black tracking-widest">Topic</label>
+                <input
+                  value={autoTopic}
+                  onChange={e => setAutoTopic(e.target.value)}
+                  placeholder="e.g., Calculus"
+                  className="w-full bg-slate-950/50 border border-white/10 rounded-xl px-4 py-3 text-white text-sm focus:border-purple-500/50 focus:outline-none"
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <label className="text-[10px] text-indigo-400 uppercase font-black tracking-widest">Sub-Topic</label>
+                <input
+                  value={autoSubTopic}
+                  onChange={e => setAutoSubTopic(e.target.value)}
+                  placeholder="e.g., Derivatives"
+                  className="w-full bg-slate-950/50 border border-white/10 rounded-xl px-4 py-3 text-white text-sm focus:border-purple-500/50 focus:outline-none"
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <label className="text-[10px] text-indigo-400 uppercase font-black tracking-widest">Count</label>
+                <div className="flex space-x-2">
+                  {[3, 5, 10].map(n => (
+                    <button
+                      key={n}
+                      onClick={() => setAutoCount(n)}
+                      className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${
+                        autoCount === n
+                          ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/25'
+                          : 'bg-white/5 text-slate-400 hover:bg-white/10'
+                      }`}
+                    >
+                      {n} Questions
+                    </button>
+                  ))}
+                </div>
+              </div>
+              
+              <button
+                onClick={handleAutoGenerate}
+                disabled={isGenerating || !autoTopic || !autoSubTopic}
+                className="w-full py-3 mt-4 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 disabled:opacity-50 rounded-xl text-white font-black shadow-xl transition-all active:scale-[0.98] flex items-center justify-center space-x-2"
+              >
+                {isGenerating ? (
+                   <i className="fa-solid fa-circle-notch animate-spin"></i>
+                ) : (
+                   <i className="fa-solid fa-bolt"></i>
+                )}
+                <span>{isGenerating ? 'Dreaming up questions...' : 'Generate Questions'}</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

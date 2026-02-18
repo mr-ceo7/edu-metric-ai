@@ -11,6 +11,7 @@ import { useLocalStorage } from './hooks/useLocalStorage';
 import { loadSession, saveSession, sessionToExamData, createNewSession } from './services/storageService';
 import { ExamData, ExamSession, AppConfig, Question, StudentScore, StudentInfo } from './types';
 import { MOCK_EXAM } from './mockData';
+import { DEMO_SESSION } from './services/demoData';
 
 const DEFAULT_CONFIG: AppConfig = {
   school: 'Kisii School',
@@ -57,6 +58,25 @@ const App: React.FC = () => {
     setConfig(DEFAULT_CONFIG);
     setActiveTab('dashboard');
   }, [setConfig]);
+
+  const handleDemoLogin = useCallback(() => {
+    // 1. Set authenticated config
+    setConfig({
+      school: DEMO_SESSION.school,
+      subject: DEMO_SESSION.subject,
+      level: DEMO_SESSION.level,
+      isAuthenticated: true,
+    });
+    
+    // 2. Load demo session into state and storage
+    // We create a fresh copy to avoid mutating the constant if the user plays around
+    const sessionCopy = JSON.parse(JSON.stringify(DEMO_SESSION));
+    setSession(sessionCopy);
+    saveSession(sessionCopy);
+    
+    // 3. Navigate to dashboard
+    setActiveTab('dashboard');
+  }, [setConfig, setSession]);
 
   const handleUpdateExam = useCallback((updatedExam: ExamData) => {
     if (session) {
@@ -126,7 +146,7 @@ const App: React.FC = () => {
 
   // Show login screen if not authenticated
   if (!config.isAuthenticated) {
-    return <LoginScreen onLogin={handleLogin} />;
+    return <LoginScreen onLogin={handleLogin} onDemoLogin={handleDemoLogin} />;
   }
 
   const renderContent = () => {

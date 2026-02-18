@@ -1,11 +1,10 @@
 import React from 'react';
 import { pdf, Document, Page, View, Text, StyleSheet, Image } from '@react-pdf/renderer';
-import { Question, StudentInfo, CornerQRData, QuestionQRData } from '../types';
+import { Question, StudentInfo, CornerQRData } from '../types';
 
-// We need to generate QR codes as data URLs for the PDF
+// Generate QR code as a high-resolution data URL for crisp PDF rendering
 async function generateQRDataUrl(data: object): Promise<string> {
   try {
-    // Dynamically use the canvas-based QR library
     const QRCode = await import('qrcode');
     return await QRCode.toDataURL(JSON.stringify(data), {
       errorCorrectionLevel: 'H',
@@ -14,7 +13,6 @@ async function generateQRDataUrl(data: object): Promise<string> {
       color: { dark: '#000000', light: '#ffffff' },
     });
   } catch {
-    // Fallback: return a minimal placeholder
     return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
   }
 }
@@ -64,19 +62,6 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     padding: 10,
   },
-  questionHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginBottom: 6,
-  },
-  questionQR: {
-    width: 40,
-    height: 40,
-    marginRight: 8,
-  },
-  questionInfo: {
-    flex: 1,
-  },
   questionNumber: {
     fontSize: 11,
     fontFamily: 'Helvetica-Bold',
@@ -95,7 +80,7 @@ const styles = StyleSheet.create({
   omrStrip: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 6,
+    marginTop: 8,
     paddingTop: 6,
     borderTop: '1px solid #f1f5f9',
   },
@@ -120,14 +105,14 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   answerArea: {
-    marginTop: 6,
+    marginTop: 8,
     borderTop: '1px dashed #e2e8f0',
     paddingTop: 6,
-    minHeight: 40,
+    minHeight: 60,
   },
   answerLine: {
     borderBottom: '0.5px solid #e2e8f0',
-    height: 18,
+    height: 20,
   },
   footer: {
     position: 'absolute',
@@ -140,19 +125,7 @@ const styles = StyleSheet.create({
     fontSize: 8,
     color: '#94a3b8',
   },
-  finalPageBanner: {
-    textAlign: 'center',
-    padding: 8,
-    backgroundColor: '#fef3c7',
-    borderRadius: 4,
-    marginBottom: 10,
-    marginTop: 50,
-  },
-  finalPageText: {
-    fontSize: 9,
-    fontFamily: 'Helvetica-Bold',
-    color: '#92400e',
-  },
+
 });
 
 interface BookletConfig {
@@ -166,12 +139,12 @@ interface BookletConfig {
   totalPages: number;
 }
 
+// Only corner QR data URLs per page (no per-question QR codes)
 interface PageQRCache {
   cornerQR: string;
-  questionQRs: Record<number, string>; // questionId -> QR data URL
 }
 
-// Pre-generate all QR codes for a student's booklet
+// Pre-generate corner QR codes for each page of a student's booklet
 async function generateStudentQRs(
   student: StudentInfo,
   config: BookletConfig
@@ -195,23 +168,7 @@ async function generateStudentQRs(
     };
 
     const cornerQR = await generateQRDataUrl(cornerData);
-
-    const pageQuestions = config.questions.filter(q => (q.pageNumber || 1) === pageNum);
-    const questionQRs: Record<number, string> = {};
-
-    for (const q of pageQuestions) {
-      const qData: QuestionQRData = {
-        type: 'question',
-        questionId: q.id,
-        topic: q.topic,
-        concept: q.subTopic,
-        maxScore: q.maxScore,
-        questionText: q.questionText || '',
-      };
-      questionQRs[q.id] = await generateQRDataUrl(qData);
-    }
-
-    pages[pageNum] = { cornerQR, questionQRs };
+    pages[pageNum] = { cornerQR };
   }
 
   return pages;
@@ -220,9 +177,8 @@ async function generateStudentQRs(
 // The PDF Document component
 const BookletDocument: React.FC<{
   config: BookletConfig;
-  allQRs: Map<string, Record<number, PageQRCache>>; // studentId -> pages
+  allQRs: Map<string, Record<number, PageQRCache>>;
 }> = ({ config, allQRs }) => {
-
   return (
     <Document>
       {config.students.map(student => {
@@ -236,7 +192,7 @@ const BookletDocument: React.FC<{
 
           return (
             <Page key={`${student.id}-p${pageNum}`} size="A4" style={styles.page}>
-              {/* 4 Corner QR codes */}
+              {/* 4 Corner QR codes — used as page boundary markers for completeness check */}
               {pageCache && (
                 <>
                   <Image src={pageCache.cornerQR} style={[styles.cornerQR, styles.cornerTL]} />
@@ -257,31 +213,20 @@ const BookletDocument: React.FC<{
                 </Text>
               </View>
 
-              {isFinalPage && (
-                <View style={styles.finalPageBanner}>
-                  <Text style={styles.finalPageText}>⬛ FINAL PAGE — END OF BOOKLET ⬛</Text>
-                </View>
-              )}
 
-              {/* Questions */}
+
+              {/* Questions — no per-question QR codes, more space for answers */}
               {pageQuestions.map(q => (
                 <View key={q.id} style={styles.questionBlock} wrap={false}>
-                  <View style={styles.questionHeader}>
-                    {pageCache?.questionQRs[q.id] && (
-                      <Image src={pageCache.questionQRs[q.id]} style={styles.questionQR} />
-                    )}
-                    <View style={styles.questionInfo}>
-                      <Text style={styles.questionNumber}>
-                        Question {q.id} ({q.maxScore} marks)
-                      </Text>
-                      {q.questionText && (
-                        <Text style={styles.questionText}>{q.questionText}</Text>
-                      )}
-                      <Text style={styles.topicLabel}>
-                        {q.topic} › {q.subTopic} • {q.cognitiveLevel}
-                      </Text>
-                    </View>
-                  </View>
+                  <Text style={styles.questionNumber}>
+                    Question {q.id} ({q.maxScore} marks)
+                  </Text>
+                  {q.questionText && (
+                    <Text style={styles.questionText}>{q.questionText}</Text>
+                  )}
+                  <Text style={styles.topicLabel}>
+                    {q.topic} › {q.subTopic} • {q.cognitiveLevel}
+                  </Text>
 
                   {/* OMR Scoring Strip */}
                   <View style={styles.omrStrip}>
@@ -293,9 +238,9 @@ const BookletDocument: React.FC<{
                     ))}
                   </View>
 
-                  {/* Answer writing area */}
+                  {/* Answer writing area — more space without question QR */}
                   <View style={styles.answerArea}>
-                    {Array.from({ length: 3 }, (_, i) => (
+                    {Array.from({ length: 4 }, (_, i) => (
                       <View key={i} style={styles.answerLine} />
                     ))}
                   </View>
@@ -306,6 +251,7 @@ const BookletDocument: React.FC<{
               <View style={styles.footer}>
                 <Text style={styles.footerText}>
                   Page {pageNum} of {config.totalPages} • {student.name} • {config.school}
+                  {isFinalPage ? ' • END OF BOOKLET' : ''}
                 </Text>
               </View>
             </Page>
@@ -318,7 +264,6 @@ const BookletDocument: React.FC<{
 
 // Main export function that generates and downloads the PDF
 export async function generateBookletPDF(config: BookletConfig): Promise<void> {
-  // Pre-generate all QR codes
   const allQRs = new Map<string, Record<number, PageQRCache>>();
 
   for (const student of config.students) {
@@ -326,14 +271,10 @@ export async function generateBookletPDF(config: BookletConfig): Promise<void> {
     allQRs.set(student.id, qrs);
   }
 
-
-
-  // Generate the PDF blob
   const blob = await pdf(
     <BookletDocument config={config} allQRs={allQRs} />
   ).toBlob();
 
-  // Trigger download
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;

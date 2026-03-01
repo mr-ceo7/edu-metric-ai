@@ -7,13 +7,20 @@
  *   POST /api/generate — query uploaded files with a prompt
  */
 
+const isProduction = (): boolean =>
+  typeof window !== 'undefined' && window.location.protocol === 'https:';
+
 const getBaseUrl = (): string => {
   // In production (Vercel HTTPS), use same-origin proxy to avoid Mixed Content
-  if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
+  if (isProduction()) {
     return '';  // relative URLs → /api/proxy/upload, /api/proxy/generate
   }
   return (process.env.CUSTOM_API_URL || 'http://localhost:5000').replace(/\/+$/, '');
 };
+
+// On HTTPS (Vercel) use proxy paths; on localhost use direct Flask paths
+const getApiPath = (endpoint: string): string =>
+  isProduction() ? `/api/proxy/${endpoint}` : `/api/${endpoint}`;
 
 /**
  * Upload a file to the Custom API.
@@ -26,7 +33,7 @@ export const uploadFile = async (
   const formData = new FormData();
   formData.append('file', blob, filename);
 
-  const res = await fetch(`${getBaseUrl()}/api/proxy/upload`, {
+  const res = await fetch(`${getBaseUrl()}${getApiPath('upload')}`, {
     method: 'POST',
     body: formData,
   });
@@ -47,7 +54,7 @@ export const generate = async (
   prompt: string,
   files: string[]
 ): Promise<string> => {
-  const res = await fetch(`${getBaseUrl()}/api/proxy/generate`, {
+  const res = await fetch(`${getBaseUrl()}${getApiPath('generate')}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ prompt, files, stream: false }),

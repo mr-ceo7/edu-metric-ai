@@ -2,7 +2,17 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { ExamData, DiagnosisResult, RemedialPack, Question } from "../types";
 import { uploadAndGenerate, generateTextOnly } from "./customApiService";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+let _ai: GoogleGenAI | null = null;
+const getAI = (): GoogleGenAI => {
+  if (!_ai) {
+    const apiKey = process.env.API_KEY;
+    if (!apiKey) {
+      throw new Error('GEMINI_API_KEY is not configured.');
+    }
+    _ai = new GoogleGenAI({ apiKey });
+  }
+  return _ai;
+};
 
 export interface PageAnalysisResult {
   scores: Record<number, number>;
@@ -132,7 +142,7 @@ export const extractOMRScores = async (
 
   // ---- Attempt 1: @google/genai SDK ----
   try {
-    const response = await ai.models.generateContent({
+    const response = await getAI().models.generateContent({
       model,
       contents: {
         parts: [
@@ -230,7 +240,7 @@ export const analyzeExamData = async (examData: ExamData): Promise<DiagnosisResu
 
   // ---- Attempt 1: SDK ----
   try {
-    const response = await ai.models.generateContent({
+    const response = await getAI().models.generateContent({
       model,
       contents: promptText,
       config: {
@@ -280,7 +290,7 @@ export const generateRemedialPack = async (topic: string, subject: string): Prom
 
   // ---- Attempt 1: SDK ----
   try {
-    const response = await ai.models.generateContent({
+    const response = await getAI().models.generateContent({
       model,
       contents: promptText,
       config: {
@@ -340,7 +350,7 @@ export const generateExamQuestions = async (
   // ---- Attempt 1: SDK ----
   try {
     // @ts-ignore
-    const model = ai.getGenerativeModel({
+    const model = getAI().getGenerativeModel({
       model: "gemini-1.5-flash",
       generationConfig: { responseMimeType: "application/json" }
     });

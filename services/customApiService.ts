@@ -8,6 +8,10 @@
  */
 
 const getBaseUrl = (): string => {
+  // In production (Vercel HTTPS), use same-origin proxy to avoid Mixed Content
+  if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
+    return '';  // relative URLs → /api/proxy/upload, /api/proxy/generate
+  }
   return (process.env.CUSTOM_API_URL || 'http://localhost:5000').replace(/\/+$/, '');
 };
 
@@ -22,7 +26,7 @@ export const uploadFile = async (
   const formData = new FormData();
   formData.append('file', blob, filename);
 
-  const res = await fetch(`${getBaseUrl()}/api/upload`, {
+  const res = await fetch(`${getBaseUrl()}/api/proxy/upload`, {
     method: 'POST',
     body: formData,
   });
@@ -43,7 +47,7 @@ export const generate = async (
   prompt: string,
   files: string[]
 ): Promise<string> => {
-  const res = await fetch(`${getBaseUrl()}/api/generate`, {
+  const res = await fetch(`${getBaseUrl()}/api/proxy/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ prompt, files, stream: false }),

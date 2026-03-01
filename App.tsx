@@ -175,7 +175,7 @@ const App: React.FC = () => {
       case 'analysis':
         return <InferenceEngine exam={currentExam} />;
       case 'remediation':
-        return <RemedialPack preTopic={remedialTopic} />;
+        return <RemedialPack preTopic={remedialTopic} config={config} />;
       default:
         return <Dashboard exam={currentExam} onRemediate={triggerRemediation} />;
     }

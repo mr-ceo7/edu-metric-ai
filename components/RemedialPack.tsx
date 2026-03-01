@@ -1,16 +1,19 @@
 
 import React, { useState, useEffect } from 'react';
 import { generateRemedialPack } from '../services/geminiService';
-import { RemedialPack as IRemedialPack } from '../types';
+import { RemedialPack as IRemedialPack, AppConfig } from '../types';
 
 interface RemedialPackProps {
   preTopic?: string;
+  config: AppConfig;
 }
 
-const RemedialPack: React.FC<RemedialPackProps> = ({ preTopic }) => {
+const RemedialPack: React.FC<RemedialPackProps> = ({ preTopic, config }) => {
   const [topic, setTopic] = useState(preTopic || '');
   const [loading, setLoading] = useState(false);
   const [pack, setPack] = useState<IRemedialPack | null>(null);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [pdfReady, setPdfReady] = useState(false);
 
   useEffect(() => {
     if (preTopic) {
@@ -107,14 +110,43 @@ const RemedialPack: React.FC<RemedialPackProps> = ({ preTopic }) => {
               </div>
             </section>
 
-            <div className="flex justify-center pt-8 border-t border-white/5">
+            <div className="flex flex-col items-center pt-8 border-t border-white/5 space-y-3">
               <button
-                onClick={() => window.print()}
-                className="px-8 py-3 glass hover:bg-white/5 rounded-xl font-bold text-white border-white/20 transition-all flex items-center space-x-2"
+                onClick={async () => {
+                  setIsDownloading(true);
+                  setPdfReady(false);
+                  try {
+                    const { generateRemedialPDF } = await import('./RemedialPDF');
+                    await generateRemedialPDF({
+                      school: config.school,
+                      subject: config.subject,
+                      level: config.level,
+                      topic: pack!.topic,
+                      quiz: pack!.quiz,
+                    });
+                    setPdfReady(true);
+                  } catch (err) {
+                    console.error('Remedial PDF generation failed:', err);
+                    alert('Failed to generate PDF. Check console for details.');
+                  } finally {
+                    setIsDownloading(false);
+                  }
+                }}
+                disabled={isDownloading}
+                className="px-8 py-3 glass hover:bg-white/5 rounded-xl font-bold text-white border-white/20 transition-all flex items-center space-x-2 disabled:opacity-50"
               >
-                <i className="fa-solid fa-print"></i>
-                <span>Print Remedial Handout</span>
+                {isDownloading ? (
+                  <><i className="fa-solid fa-spinner animate-spin"></i><span>Generating PDF...</span></>
+                ) : (
+                  <><i className="fa-solid fa-file-pdf"></i><span>Download Remedial Handout (PDF)</span></>
+                )}
               </button>
+              {pdfReady && (
+                <div className="flex items-center space-x-2 text-emerald-400 animate-fade-in">
+                  <i className="fa-solid fa-circle-check"></i>
+                  <span className="text-sm font-bold">PDF downloaded successfully!</span>
+                </div>
+              )}
             </div>
           </div>
         </div>

@@ -56,10 +56,15 @@ const DataIngestion: React.FC<DataIngestionProps> = ({ session, config, onSessio
         audio: false
       });
       streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
+      // Set cameraActive first so the <video> element renders,
+      // then attach the stream on the next frame once the ref is available.
       setCameraActive(true);
+      requestAnimationFrame(() => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.play().catch(() => {});
+        }
+      });
     } catch {
       alert('Camera error. Please ensure permissions are granted or use image upload instead.');
     }

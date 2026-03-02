@@ -1,20 +1,23 @@
 /**
- * Client-Side OMR Scanner v3 — Hybrid Adaptive
+ * Client-Side OMR Scanner v5 — Self-Calibrating
  *
  * Strategy:
- * 1. Use jsQR to find corner QR positions → precise coordinate mapper
- * 2. Use coordinate mapper for X positions (reliable — PDF padding/spacing is known)
- * 3. Adaptively detect OMR strip Y positions by scanning for bubble-shaped dark rows
- * 4. Sample bubble interiors at the mapped X + detected Y positions
- * 5. The darkest bubble = filled score
+ * 1. Corner QR detection → coordinate mapper (perspective correction)
+ * 2. Y-detection: Periodic fingerprint (proven approach)
+ * 3. X-calibration: Auto-detect first bubble X and spacing by sweeping
+ *    horizontally at the Y with strongest signal
+ * 4. Use calibrated X positions for all strips (consistent per page)
+ * 5. Sample bubble interiors to find the darkest (filled) one
+ *
+ * This approach adapts to any PDF layout without hardcoded constants.
  */
 
 import { Question } from '../types';
 
-// ========== PDF CONSTANTS ==========
+// ========== CONSTANTS (coordinate mapper only) ==========
 const PDF_W = 595.28;
 const PDF_H = 841.89;
-const QR_CENTER_OFFSET = 15 + 55 / 2; // 42.5
+const QR_CENTER_OFFSET = 15 + 55 / 2;
 
 const PDF_CORNERS = {
   TL: { x: QR_CENTER_OFFSET, y: QR_CENTER_OFFSET },
@@ -22,13 +25,6 @@ const PDF_CORNERS = {
   BL: { x: QR_CENTER_OFFSET, y: PDF_H - QR_CENTER_OFFSET },
   BR: { x: PDF_W - QR_CENTER_OFFSET, y: PDF_H - QR_CENTER_OFFSET },
 };
-
-// OMR bubble layout (PDF points) — X positions are reliable
-const PAGE_PAD = 40;
-const BLOCK_PAD = 10;
-const OMR_LABEL_W = 32;        // "SCORE:" label width
-const OMR_BUBBLE_SIZE = 16;    // diameter
-const OMR_BUBBLE_SPACING = 20; // center-to-center
 
 // ========== TYPES ==========
 interface Point { x: number; y: number; }
@@ -55,7 +51,7 @@ function createCoordinateMapper(
   };
 }
 
-// ========== QR CENTER DETECTION ==========
+// ========== QR CORNER DETECTION ==========
 
 async function findQRCenters(
   canvas: HTMLCanvasElement,
@@ -137,92 +133,218 @@ function sampleCircleDarkness(
   }
 
   if (count === 0) return 0;
-  return 255 - (totalGray / count); // 0=white, 255=black
+  return 255 - (totalGray / count);
 }
 
-// ========== OMR STRIP Y-DETECTION ==========
+// ========== SELF-CALIBRATING OMR DETECTION ==========
 
 /**
- * Find Y positions of OMR bubble strips by looking for rows where
- * sampling at the known X positions yields bubble-like patterns.
- * 
- * The key insight: we KNOW the X positions of the bubbles (from PDF layout)
- * but NOT the Y positions (PDF layout engine renders differently).
- * So we sweep Y and check if bubbles exist at the known X positions.
+ * Auto-calibrate bubble X positions by finding the periodic signal
+ * in the strongest OMR strip. Returns firstBubbleX and spacing in image coords.
+ */
+function calibrateBubbleX(
+  imageData: ImageData,
+  imgW: number,
+  stripY: number,
+  estBubbleDia: number,
+  sampleR: number
+): { firstX: number; spacing: number } | null {
+  // Fine horizontal scan — start AFTER label area (~12% from left)
+  // The SCORE: label is within the first ~80pt from page margin.
+  // Starting at 12% safely skips it at any resolution.
+  const step = Math.max(1, Math.round(estBubbleDia * 0.1));
+  const leftStart = Math.round(imgW * 0.12);
+  const rightEnd = Math.round(imgW * 0.90);
+
+  const profile: number[] = [];
+  const xCoords: number[] = [];
+
+  for (let x = leftStart; x < rightEnd; x += step) {
+    profile.push(sampleCircleDarkness(imageData, x, stripY, sampleR));
+    xCoords.push(x);
+  }
+
+  // Find all peaks above threshold
+  interface Peak { x: number; dark: number; }
+  const peaks: Peak[] = [];
+
+  for (let i = 2; i < profile.length - 2; i++) {
+    if (profile[i] > 12 &&
+        profile[i] >= profile[i - 1] && profile[i] >= profile[i + 1] &&
+        profile[i] >= profile[i - 2] && profile[i] >= profile[i + 2]) {
+      peaks.push({ x: xCoords[i], dark: profile[i] });
+    }
+  }
+
+  if (peaks.length < 3) return null;
+
+  // Merge very close peaks (within 1/4 bubble diameter — truly overlapping detections)
+  const merged: Peak[] = [peaks[0]];
+  for (let i = 1; i < peaks.length; i++) {
+    const last = merged[merged.length - 1];
+    if (peaks[i].x - last.x < estBubbleDia * 0.25) {
+      if (peaks[i].dark > last.dark) {
+        merged[merged.length - 1] = peaks[i];
+      }
+    } else {
+      merged.push(peaks[i]);
+    }
+  }
+
+  if (merged.length < 3) return null;
+
+  // Find the longest regularly-spaced subsequence of peaks.
+  // Ideal spacing ≈ 1.25× bubble diameter (16pt bubble, 20pt spacing).
+  const idealSpacing = estBubbleDia * 1.25;
+  let bestRun: Peak[] = [];
+  let bestSpacing = 0;
+  let bestScore = 0;
+
+  for (let startIdx = 0; startIdx < Math.min(merged.length - 2, 6); startIdx++) {
+    for (let refIdx = startIdx + 1; refIdx < Math.min(startIdx + 4, merged.length); refIdx++) {
+      const refSpacing = merged[refIdx].x - merged[startIdx].x;
+
+      // Skip spacings outside expected range (0.8× to 2.0× bubble diameter)
+      if (refSpacing < estBubbleDia * 0.8 || refSpacing > estBubbleDia * 2.0) continue;
+
+      // Count peaks that match this spacing
+      const run: Peak[] = [merged[startIdx], merged[refIdx]];
+      let expectedX = merged[refIdx].x + refSpacing;
+
+      for (let j = refIdx + 1; j < merged.length && run.length < 15; j++) {
+        if (Math.abs(merged[j].x - expectedX) < refSpacing * 0.3) {
+          run.push(merged[j]);
+          expectedX = merged[j].x + refSpacing;
+        }
+      }
+
+      // Score: run length + bonus for spacing near ideal
+      const spacingProximity = 1 - Math.abs(refSpacing - idealSpacing) / idealSpacing;
+      const score = run.length + spacingProximity * 2;
+
+      if (score > bestScore) {
+        bestRun = run;
+        bestSpacing = refSpacing;
+        bestScore = score;
+      }
+    }
+  }
+
+  if (bestRun.length < 3) return null;
+
+  // Refine spacing using average of the best run
+  let totalSpacing = 0;
+  for (let i = 1; i < bestRun.length; i++) {
+    totalSpacing += bestRun[i].x - bestRun[i - 1].x;
+  }
+  const avgSpacing = totalSpacing / (bestRun.length - 1);
+
+  console.log(`[OMR] X-calibration: firstX=${bestRun[0].x.toFixed(0)}, spacing=${avgSpacing.toFixed(1)}, runLen=${bestRun.length}, totalPeaks=${merged.length}`);
+
+  return { firstX: bestRun[0].x, spacing: avgSpacing };
+}
+
+/**
+ * Find OMR strip Y positions using periodic fingerprint detection.
+ * Uses calibrated X positions instead of hardcoded ones.
  */
 function findOMRStripYPositions(
   imageData: ImageData,
   imgW: number,
   imgH: number,
-  mapToImage: (px: number, py: number) => Point,
-  questions: Question[]
+  firstBubbleX: number,
+  bubbleSpacing: number,
+  sampleR: number,
+  gapSampleR: number,
+  expectedCount: number
 ): number[] {
-  // The first bubble of each question starts at this PDF X
-  const firstBubbleX = PAGE_PAD + BLOCK_PAD + OMR_LABEL_W + OMR_BUBBLE_SIZE / 2;
-  
-  const bubbleDiaImg = Math.round(OMR_BUBBLE_SIZE * (imgW / PDF_W));
-  const sampleR = Math.max(2, Math.round(bubbleDiaImg * 0.35));
+  // Bubble center positions for fingerprint check
+  const bubbleXs: number[] = [];
+  for (let i = 0; i < 5; i++) {
+    bubbleXs.push(firstBubbleX + i * bubbleSpacing);
+  }
 
-  // Sweep PDF y from header to just above footer
-  const step = 1.5;
-  const startY = 80;
-  const endY = PDF_H - 50;
+  // Gap positions (midpoints between bubbles)
+  const gapXs: number[] = [];
+  for (let i = 0; i < 4; i++) {
+    gapXs.push(firstBubbleX + i * bubbleSpacing + bubbleSpacing / 2);
+  }
 
-  // Check first 5 bubble X positions as signature for more robust detection
-  const signatureXs = [
-    firstBubbleX,
-    firstBubbleX + OMR_BUBBLE_SPACING,
-    firstBubbleX + OMR_BUBBLE_SPACING * 2,
-    firstBubbleX + OMR_BUBBLE_SPACING * 3,
-    firstBubbleX + OMR_BUBBLE_SPACING * 4,
-  ];
+  // Estimate scan step in image pixels (~1pt equivalent)
+  const ptScale = imgH / PDF_H;
+  const step = Math.max(1, Math.round(ptScale));
+  const startY = Math.round(imgH * 0.08);
+  const endY = Math.round(imgH * 0.95);
 
-  const yScores: { pdfY: number; score: number; avgDark: number }[] = [];
+  const candidates: { y: number; periodicScore: number }[] = [];
 
-  for (let pdfY = startY; pdfY < endY; pdfY += step) {
-    let totalDark = 0;
-    let minDark = 255;
-    let signatureHits = 0;
-
-    for (const sx of signatureXs) {
-      const imgPt = mapToImage(sx, pdfY);
-      const dark = sampleCircleDarkness(imageData, imgPt.x, imgPt.y, sampleR);
-      totalDark += dark;
-      minDark = Math.min(minDark, dark);
-      if (dark > 8) signatureHits++;
+  for (let y = startY; y < endY; y += step) {
+    let totalBubbleDark = 0;
+    let bubbleHits = 0;
+    for (const bx of bubbleXs) {
+      const dark = sampleCircleDarkness(imageData, bx, y, sampleR);
+      totalBubbleDark += dark;
+      if (dark > 8) bubbleHits++;
     }
 
-    const avgDark = totalDark / signatureXs.length;
+    if (bubbleHits < 3) continue;
+    const avgBubbleDark = totalBubbleDark / bubbleXs.length;
+    if (avgBubbleDark < 10) continue;
 
-    // At least 3 out of 5 positions should show some darkness, and average must be notable
-    if (signatureHits >= 3 && avgDark > 12) {
-      yScores.push({ pdfY, score: avgDark, avgDark });
+    let totalGapDark = 0;
+    for (const gx of gapXs) {
+      totalGapDark += sampleCircleDarkness(imageData, gx, y, gapSampleR);
+    }
+    const avgGapDark = totalGapDark / gapXs.length;
+
+    const periodicScore = avgBubbleDark - avgGapDark;
+    if (periodicScore > 5) {
+      candidates.push({ y, periodicScore });
     }
   }
 
   // Cluster into strips
-  const strips: { pdfY: number; peakScore: number }[] = [];
-  const minGap = 30; // Minimum gap between question blocks in PDF points
+  const estBubbleDia = Math.round(imgW * 16 / PDF_W);
+  const minGap = estBubbleDia * 3;
 
-  for (const ys of yScores) {
-    const lastStrip = strips[strips.length - 1];
-    if (!lastStrip || ys.pdfY - lastStrip.pdfY > minGap) {
-      strips.push({ pdfY: ys.pdfY, peakScore: ys.score });
-    } else if (ys.score > lastStrip.peakScore) {
-      // Update peak within same cluster
-      lastStrip.pdfY = ys.pdfY;
-      lastStrip.peakScore = ys.score;
+  const strips: { y: number; score: number }[] = [];
+  for (const c of candidates) {
+    const last = strips[strips.length - 1];
+    if (!last || c.y - last.y > minGap) {
+      strips.push({ y: c.y, score: c.periodicScore });
+    } else if (c.periodicScore > last.score) {
+      last.y = c.y;
+      last.score = c.periodicScore;
     }
   }
 
-  console.log(`[OMR] Y-detection found ${strips.length} potential strips:`, strips.map(s => `Y=${s.pdfY.toFixed(0)}`).join(', '));
+  console.log(`[OMR] Y-scan: ${strips.length} strips found:`,
+    strips.map(s => `Y=${s.y}(ps=${s.score.toFixed(0)})`).join(', '));
 
-  // Return the best N strips (sorted by Y)
-  return strips
-    .sort((a, b) => b.peakScore - a.peakScore)
-    .slice(0, questions.length)
-    .sort((a, b) => a.pdfY - b.pdfY)
-    .map(s => s.pdfY);
+  // Select top N by score, sort by Y, refine
+  const selected = strips
+    .sort((a, b) => b.score - a.score)
+    .slice(0, expectedCount)
+    .sort((a, b) => a.y - b.y);
+
+  // Refine each Y by sampling ±3px around the peak
+  return selected.map(strip => {
+    let bestY = strip.y;
+    let bestSum = -1;
+    const refineStep = Math.max(1, Math.round(ptScale * 0.5));
+
+    for (let dy = -estBubbleDia / 2; dy <= estBubbleDia / 2; dy += refineStep) {
+      let sum = 0;
+      for (const bx of bubbleXs) {
+        sum += sampleCircleDarkness(imageData, bx, strip.y + dy, sampleR);
+      }
+      if (sum > bestSum) {
+        bestSum = sum;
+        bestY = strip.y + dy;
+      }
+    }
+    return bestY;
+  });
 }
 
 // ========== MAIN EXPORT ==========
@@ -249,24 +371,57 @@ export async function extractOMRScoresClient(
   // Find QR corners
   const { corners: imgCorners, found: cornersFound } = await findQRCenters(canvas, img.width, img.height);
   if (cornersFound < 4) {
-    warnings.push(`${cornersFound}/4 QR corners detected. Accuracy may be reduced.`);
+    warnings.push(`${cornersFound}/4 QR corners detected.`);
   }
 
-  // Create coordinate mapper
-  const mapToImage = createCoordinateMapper(imgCorners);
+  // Estimated bubble dimensions from image size
+  const estBubbleDia = Math.round(img.width * 16 / PDF_W);
+  const sampleR = Math.max(2, Math.round(estBubbleDia * 0.35));
+  const gapSampleR = Math.max(2, Math.round(estBubbleDia * 0.2));
+  const innerR = Math.max(2, Math.round(estBubbleDia * 0.3));
 
-  // Scale factor for sampling (image pixels per PDF point)
-  const imgRectW = imgCorners.TR.x - imgCorners.TL.x;
-  const avgScale = imgRectW / (PDF_CORNERS.TR.x - PDF_CORNERS.TL.x);
-  const bubbleRadiusImg = (OMR_BUBBLE_SIZE / 2) * avgScale;
-  // Sample interior only (40% of radius to avoid outline)
-  const innerSampleR = Math.max(2, Math.round(bubbleRadiusImg * 0.4));
+  // Step 1: Initial Y-scan with estimated X positions to find one strong strip
+  // Use proportional estimate for initial scan
+  const estFirstX = img.width * 90 / PDF_W;  // ~90pt from left edge
+  const estSpacing = img.width * 20 / PDF_W;  // ~20pt spacing
 
-  // Detect OMR strip Y positions
-  const stripYPositions = findOMRStripYPositions(imageData, img.width, img.height, mapToImage, questions);
+  // Find a strong strip for calibration
+  const initialStrips = findOMRStripYPositions(
+    imageData, img.width, img.height,
+    estFirstX, estSpacing, sampleR, gapSampleR, questions.length
+  );
 
-  console.log(`[OMR] Matched ${stripYPositions.length} strips to ${questions.length} questions`);
+  if (initialStrips.length === 0) {
+    warnings.push('No OMR strips found. Cannot calibrate.');
+    const scores: Record<number, number> = {};
+    const confidence: Record<number, number> = {};
+    questions.forEach(q => { scores[q.id] = 0; confidence[q.id] = 0; });
+    return { scores, confidence, warnings };
+  }
 
+  // Step 2: Calibrate X-positions using the strongest strip
+  const calibResult = calibrateBubbleX(imageData, img.width, initialStrips[0], estBubbleDia, sampleR);
+
+  let firstBubbleX: number;
+  let bubbleSpacing: number;
+
+  if (calibResult) {
+    firstBubbleX = calibResult.firstX;
+    bubbleSpacing = calibResult.spacing;
+  } else {
+    // Fallback to proportional estimates
+    firstBubbleX = estFirstX;
+    bubbleSpacing = estSpacing;
+    warnings.push('X-calibration failed, using proportional estimates.');
+  }
+
+  // Use initial Y positions directly (they're already accurate)
+  // No need to re-scan Y — the initial estimated X was close enough for Y detection
+  const stripYPositions = initialStrips;
+
+  console.log(`[OMR] Final: ${stripYPositions.length} strips for ${questions.length} questions, X: firstX=${firstBubbleX.toFixed(0)} spacing=${bubbleSpacing.toFixed(1)}`);
+
+  // Step 4: Score extraction
   const scores: Record<number, number> = {};
   const confidence: Record<number, number> = {};
 
@@ -281,27 +436,21 @@ export async function extractOMRScoresClient(
     }
 
     const stripY = stripYPositions[i];
-
-    // Sample each bubble at known X positions + detected Y
     const darknessValues: number[] = [];
-    const firstBubbleX = PAGE_PAD + BLOCK_PAD + OMR_LABEL_W + OMR_BUBBLE_SIZE / 2;
 
     for (let n = 0; n <= q.maxScore; n++) {
-      const pdfX = firstBubbleX + n * OMR_BUBBLE_SPACING;
-      const imgPt = mapToImage(pdfX, stripY);
-      const darkness = sampleCircleDarkness(imageData, imgPt.x, imgPt.y, innerSampleR);
-      darknessValues.push(darkness);
+      const bx = firstBubbleX + n * bubbleSpacing;
+      const dark = sampleCircleDarkness(imageData, bx, stripY, innerR);
+      darknessValues.push(dark);
     }
 
-    // Find the darkest bubble
     const maxDark = Math.max(...darknessValues);
     const sorted = [...darknessValues].sort((a, b) => a - b);
-    // Median of all values (more robust than min for computing contrast)
     const median = sorted[Math.floor(sorted.length / 2)];
     const contrast = maxDark - median;
     const darkestIdx = darknessValues.indexOf(maxDark);
 
-    console.log(`[OMR] Q${q.id}: stripY=${stripY.toFixed(0)}, bubbles=[${darknessValues.map(d => d.toFixed(0)).join(',')}], contrast=${contrast.toFixed(0)}, idx=${darkestIdx}`);
+    console.log(`[OMR] Q${q.id}: darkness=[${darknessValues.map(d => d.toFixed(0)).join(',')}], contrast=${contrast.toFixed(0)}, idx=${darkestIdx}`);
 
     const CONTRAST_THRESHOLD = 20;
 

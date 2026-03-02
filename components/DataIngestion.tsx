@@ -357,45 +357,50 @@ const DataIngestion: React.FC<DataIngestionProps> = ({ session, config, onSessio
             </h3>
 
             {cameraActive ? (
-              <div className="space-y-3">
-                <div className="relative rounded-2xl overflow-hidden bg-black aspect-4/3">
+              <div className="fixed inset-0 z-50 bg-black flex flex-col">
+                {/* Camera feed — full screen */}
+                <div className="flex-1 relative overflow-hidden">
                   <video
                     ref={videoRef}
                     autoPlay
                     playsInline
                     muted
-                    className="w-full h-full object-cover"
+                    className="absolute inset-0 w-full h-full object-contain"
                   />
                   {/* Corner alignment guides */}
-                  <div className="absolute inset-4 pointer-events-none">
-                    <div className="absolute top-0 left-0 w-10 h-10 border-t-3 border-l-3 border-emerald-400 rounded-tl-lg"></div>
-                    <div className="absolute top-0 right-0 w-10 h-10 border-t-3 border-r-3 border-emerald-400 rounded-tr-lg"></div>
-                    <div className="absolute bottom-0 left-0 w-10 h-10 border-b-3 border-l-3 border-emerald-400 rounded-bl-lg"></div>
-                    <div className="absolute bottom-0 right-0 w-10 h-10 border-b-3 border-r-3 border-emerald-400 rounded-br-lg"></div>
+                  <div className="absolute inset-6 md:inset-12 pointer-events-none">
+                    <div className="absolute top-0 left-0 w-12 h-12 border-t-[3px] border-l-[3px] border-emerald-400 rounded-tl-xl"></div>
+                    <div className="absolute top-0 right-0 w-12 h-12 border-t-[3px] border-r-[3px] border-emerald-400 rounded-tr-xl"></div>
+                    <div className="absolute bottom-0 left-0 w-12 h-12 border-b-[3px] border-l-[3px] border-emerald-400 rounded-bl-xl"></div>
+                    <div className="absolute bottom-0 right-0 w-12 h-12 border-b-[3px] border-r-[3px] border-emerald-400 rounded-br-xl"></div>
                   </div>
-                  <p className="absolute bottom-3 left-0 right-0 text-center text-white/70 text-xs font-bold">
-                    Align all 4 corner QR codes within the green markers
-                  </p>
+                  {/* Instruction text */}
+                  <div className="absolute top-4 left-0 right-0 text-center">
+                    <span className="bg-black/60 backdrop-blur-sm text-white/80 text-xs font-bold px-4 py-2 rounded-full">
+                      Align all 4 corner QR codes within the green markers
+                    </span>
+                  </div>
                 </div>
-                <div className="flex gap-3">
+                {/* Action buttons — fixed at bottom */}
+                <div className="flex gap-3 p-4 pb-8 bg-black/90 backdrop-blur-sm">
+                  <button
+                    onClick={() => { setCameraFacing(cameraFacing === 'user' ? 'environment' : 'user'); stopCamera(); setTimeout(startCamera, 300); }}
+                    className="px-5 py-4 bg-white/10 text-white rounded-2xl transition-all"
+                  >
+                    <i className="fa-solid fa-camera-rotate text-lg"></i>
+                  </button>
                   <button
                     onClick={captureFromCamera}
-                    className="flex-2 py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-black shadow-xl shadow-indigo-500/20 active:scale-[0.98] flex items-center justify-center space-x-3 transition-all"
+                    className="flex-1 py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-black shadow-xl shadow-indigo-500/30 active:scale-[0.97] flex items-center justify-center space-x-3 transition-all"
                   >
                     <i className="fa-solid fa-camera text-xl"></i>
                     <span>Capture</span>
                   </button>
                   <button
-                    onClick={() => { setCameraFacing(cameraFacing === 'user' ? 'environment' : 'user'); stopCamera(); setTimeout(startCamera, 300); }}
-                    className="px-5 glass text-slate-400 hover:text-white rounded-2xl transition-all"
-                  >
-                    <i className="fa-solid fa-camera-rotate"></i>
-                  </button>
-                  <button
                     onClick={stopCamera}
-                    className="px-5 glass text-slate-400 hover:text-rose-400 rounded-2xl transition-all"
+                    className="px-5 py-4 bg-white/10 text-rose-400 rounded-2xl transition-all"
                   >
-                    <i className="fa-solid fa-xmark"></i>
+                    <i className="fa-solid fa-xmark text-lg"></i>
                   </button>
                 </div>
               </div>

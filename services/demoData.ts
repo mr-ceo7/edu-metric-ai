@@ -8,16 +8,16 @@ export const DEMO_SESSION: ExamSession = {
   level: "Form 4",
   examTitle: "End of Term Assessment 2024",
   date: "2024-03-20",
-  totalPages: 1,
+  totalPages: 2,
   createdAt: Date.now(),
   updatedAt: Date.now(),
   questions: [
     { id: 1, topic: "Algebra", subTopic: "Quadratic Equations", cognitiveLevel: CognitiveLevel.RECALL, maxScore: 3, pageNumber: 1, questionText: "Solve for x: x^2 - 5x + 6 = 0" },
     { id: 2, topic: "Algebra", subTopic: "Solving for X", cognitiveLevel: CognitiveLevel.UNDERSTANDING, maxScore: 5, pageNumber: 1, questionText: "Explain the steps to isolate x in the equation 3(x - 2) = 12" },
     { id: 3, topic: "Geometry", subTopic: "Circle Theorems", cognitiveLevel: CognitiveLevel.APPLICATION, maxScore: 8, pageNumber: 1, questionText: "Calculate the angle x in the cyclic quadrilateral ABCD given..." },
-    { id: 4, topic: "Geometry", subTopic: "Area of Sectors", cognitiveLevel: CognitiveLevel.ANALYSIS, maxScore: 10, pageNumber: 1, questionText: "A sector of a circle with radius 10cm has an angle of 60 degrees. Find the area." },
-    { id: 5, topic: "Trigonometry", subTopic: "SOH CAH TOA", cognitiveLevel: CognitiveLevel.RECALL, maxScore: 4, pageNumber: 1, questionText: "Define Sine, Cosine and Tangent ratios in a right-angled triangle." },
-    { id: 6, topic: "Calculus", subTopic: "Differentiation", cognitiveLevel: CognitiveLevel.APPLICATION, maxScore: 10, pageNumber: 1, questionText: "Find the derivative of f(x) = 3x^2 + 4x - 5" }
+    { id: 4, topic: "Geometry", subTopic: "Area of Sectors", cognitiveLevel: CognitiveLevel.ANALYSIS, maxScore: 10, pageNumber: 2, questionText: "A sector of a circle with radius 10cm has an angle of 60 degrees. Find the area." },
+    { id: 5, topic: "Trigonometry", subTopic: "SOH CAH TOA", cognitiveLevel: CognitiveLevel.RECALL, maxScore: 4, pageNumber: 2, questionText: "Define Sine, Cosine and Tangent ratios in a right-angled triangle." },
+    { id: 6, topic: "Calculus", subTopic: "Differentiation", cognitiveLevel: CognitiveLevel.APPLICATION, maxScore: 10, pageNumber: 2, questionText: "Find the derivative of f(x) = 3x^2 + 4x - 5" }
   ],
   students: [
      { id: "s1", name: "John Kamau" },

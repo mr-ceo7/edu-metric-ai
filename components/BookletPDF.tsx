@@ -8,8 +8,8 @@ async function generateQRDataUrl(data: object): Promise<string> {
     const QRCode = await import('qrcode');
     return await QRCode.toDataURL(JSON.stringify(data), {
       errorCorrectionLevel: 'H',
-      margin: 2,
-      width: 400,
+      margin: 1,
+      width: 600,
       color: { dark: '#000000', light: '#ffffff' },
     });
   } catch {
@@ -25,14 +25,14 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   cornerQR: {
-    width: 55,
-    height: 55,
+    width: 75,
+    height: 75,
     position: 'absolute',
   },
-  cornerTL: { top: 15, left: 15 },
-  cornerTR: { top: 15, right: 15 },
-  cornerBL: { bottom: 15, left: 15 },
-  cornerBR: { bottom: 15, right: 15 },
+  cornerTL: { top: 10, left: 10 },
+  cornerTR: { top: 10, right: 10 },
+  cornerBL: { bottom: 10, left: 10 },
+  cornerBR: { bottom: 10, right: 10 },
   header: {
     textAlign: 'center',
     marginTop: 50,
@@ -139,6 +139,24 @@ interface BookletConfig {
   totalPages: number;
 }
 
+/**
+ * Auto-distribute questions across pages based on estimated space.
+ * Page 1 has a header (~80pt) so fits fewer questions.
+ */
+function distributeQuestionsToPages(questions: Question[]): { distributed: Question[]; totalPages: number } {
+  const QUESTIONS_PER_FIRST_PAGE = 3;
+  const QUESTIONS_PER_PAGE = 4;
+  const distributed = questions.map(q => ({ ...q }));
+  let page = 1;
+  let slotsLeft = QUESTIONS_PER_FIRST_PAGE;
+  for (const q of distributed) {
+    if (slotsLeft <= 0) { page++; slotsLeft = QUESTIONS_PER_PAGE; }
+    q.pageNumber = page;
+    slotsLeft--;
+  }
+  return { distributed, totalPages: page };
+}
+
 // Only corner QR data URLs per page (no per-question QR codes)
 interface PageQRCache {
   cornerQR: string;
@@ -154,20 +172,22 @@ async function generateStudentQRs(
   for (let pageNum = 1; pageNum <= config.totalPages; pageNum++) {
     const isFinalPage = pageNum === config.totalPages;
 
-    const cornerData: CornerQRData = {
-      type: 'corner',
-      studentName: student.name,
-      studentId: student.id,
-      level: config.level,
-      subject: config.subject,
-      date: config.date,
-      examTitle: config.examTitle,
-      pageNumber: pageNum,
-      totalPages: config.totalPages,
-      isFinalPage,
+    // Use compact keys to reduce QR density for better print/scan reliability
+    // Full keys are restored by the corner scanner when decoding
+    const compactData = {
+      t: 'corner',
+      sn: student.name,
+      si: student.id,
+      l: config.level,
+      sb: config.subject,
+      d: config.date,
+      et: config.examTitle,
+      p: pageNum,
+      tp: config.totalPages,
+      fp: isFinalPage,
     };
 
-    const cornerQR = await generateQRDataUrl(cornerData);
+    const cornerQR = await generateQRDataUrl(compactData);
     pages[pageNum] = { cornerQR };
   }
 
@@ -195,10 +215,10 @@ const BookletDocument: React.FC<{
               {/* 4 Corner QR codes — used as page boundary markers for completeness check */}
               {pageCache && (
                 <>
-                  <Image src={pageCache.cornerQR} style={[styles.cornerQR, styles.cornerTL]} />
-                  <Image src={pageCache.cornerQR} style={[styles.cornerQR, styles.cornerTR]} />
-                  <Image src={pageCache.cornerQR} style={[styles.cornerQR, styles.cornerBL]} />
-                  <Image src={pageCache.cornerQR} style={[styles.cornerQR, styles.cornerBR]} />
+                  <Image fixed src={pageCache.cornerQR} style={[styles.cornerQR, styles.cornerTL]} />
+                  <Image fixed src={pageCache.cornerQR} style={[styles.cornerQR, styles.cornerTR]} />
+                  <Image fixed src={pageCache.cornerQR} style={[styles.cornerQR, styles.cornerBL]} />
+                  <Image fixed src={pageCache.cornerQR} style={[styles.cornerQR, styles.cornerBR]} />
                 </>
               )}
 
@@ -264,21 +284,31 @@ const BookletDocument: React.FC<{
 
 // Main export function that generates and downloads the PDF
 export async function generateBookletPDF(config: BookletConfig): Promise<void> {
+  // Auto-distribute questions across pages
+  const { distributed, totalPages: computedPages } = distributeQuestionsToPages(config.questions);
+  const effectiveConfig: BookletConfig = {
+    ...config,
+    questions: distributed,
+    totalPages: computedPages,
+  };
+
+  console.log(`[BookletPDF] Auto-distributed ${distributed.length} questions across ${computedPages} pages`);
+
   const allQRs = new Map<string, Record<number, PageQRCache>>();
 
-  for (const student of config.students) {
-    const qrs = await generateStudentQRs(student, config);
+  for (const student of effectiveConfig.students) {
+    const qrs = await generateStudentQRs(student, effectiveConfig);
     allQRs.set(student.id, qrs);
   }
 
   const blob = await pdf(
-    <BookletDocument config={config} allQRs={allQRs} />
+    <BookletDocument config={effectiveConfig} allQRs={allQRs} />
   ).toBlob();
 
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = `${config.school}-${config.subject}-${config.level}-Booklets.pdf`.replace(/\s+/g, '_');
+  link.download = `${effectiveConfig.school}-${effectiveConfig.subject}-${effectiveConfig.level}-Booklets.pdf`.replace(/\s+/g, '_');
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);

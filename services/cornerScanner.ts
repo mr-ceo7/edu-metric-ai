@@ -74,14 +74,29 @@ export async function scanPageCorners(imageDataUrl: string): Promise<PageComplet
     if (decoded) {
       try {
         const parsed = JSON.parse(decoded.data);
-        if (parsed.type === 'corner') {
+        // Support both compact keys (new) and full keys (old/fallback)
+        const isCompact = parsed.t === 'corner';
+        const isOriginal = parsed.type === 'corner';
+        if (isCompact || isOriginal) {
+          const data: CornerQRData = isCompact ? {
+            type: 'corner',
+            studentName: parsed.sn,
+            studentId: parsed.si,
+            level: parsed.l,
+            subject: parsed.sb,
+            date: parsed.d,
+            examTitle: parsed.et,
+            pageNumber: parsed.p,
+            totalPages: parsed.tp,
+            isFinalPage: parsed.fp,
+          } : parsed as CornerQRData;
           cornerResult = {
             position: region.position,
             detected: true,
-            data: parsed as CornerQRData,
+            data,
           };
           if (!firstCornerData) {
-            firstCornerData = parsed as CornerQRData;
+            firstCornerData = data;
           }
         }
       } catch {

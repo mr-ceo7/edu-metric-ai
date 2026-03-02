@@ -14,8 +14,15 @@ const Examine: React.FC<ExamineProps> = ({ config, session, onSessionCreated, on
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [examTitle, setExamTitle] = useState(session?.examTitle || 'Term 1 Mid-Exams');
   const [examDate, setExamDate] = useState(session?.date || new Date().toISOString().split('T')[0]);
-  const [totalPages, setTotalPages] = useState(session?.totalPages || 4);
   const [questions, setQuestions] = useState<Question[]>(session?.questions || []);
+  // Auto-compute total pages: 3 questions on page 1 (header), 4 on subsequent
+  const totalPages = useMemo(() => {
+    if (questions.length === 0) return 1;
+    const FIRST_PAGE = 3;
+    const PER_PAGE = 4;
+    if (questions.length <= FIRST_PAGE) return 1;
+    return 1 + Math.ceil((questions.length - FIRST_PAGE) / PER_PAGE);
+  }, [questions.length]);
   const [students, setStudents] = useState<StudentInfo[]>(session?.students || []);
   const [csvInput, setCsvInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
@@ -224,15 +231,8 @@ const Examine: React.FC<ExamineProps> = ({ config, session, onSessionCreated, on
           <span className="text-white font-bold text-sm">{config.subject} • {config.level}</span>
         </div>
         <div className="glass rounded-xl p-4">
-          <label className="text-[10px] text-indigo-400 uppercase font-black tracking-widest block mb-1">Total Pages</label>
-          <input
-            type="number"
-            min={1}
-            max={20}
-            value={totalPages}
-            onChange={e => setTotalPages(parseInt(e.target.value) || 1)}
-            className="w-full bg-transparent text-white font-bold text-sm focus:outline-none"
-          />
+          <label className="text-[10px] text-indigo-400 uppercase font-black tracking-widest block mb-1">Pages (auto)</label>
+          <span className="text-white font-bold text-sm">{totalPages}</span>
         </div>
       </div>
 

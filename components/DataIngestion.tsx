@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback } from 'react';
-import Cropper, { Area } from 'react-easy-crop';
+import CropOverlay, { CropRect } from './CropOverlay';
 import { ExamSession, ScanRecord, CornerQRData, Question, AppConfig } from '../types';
 import { addScanToSession, getStudentScanProgress } from '../services/storageService';
 import { extractOMRScores, PageAnalysisResult } from '../services/geminiService';
@@ -40,13 +40,7 @@ const DataIngestion: React.FC<DataIngestionProps> = ({ session, config, onSessio
 
   // Edit state
   const [rotation, setRotation] = useState(0); // 0, 90, 180, 270
-  const [crop, setCrop] = useState({ x: 0, y: 0 });
-  const [zoom, setZoom] = useState(1);
-  const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null);
-
-  const onCropComplete = useCallback((_croppedArea: Area, croppedPixels: Area) => {
-    setCroppedAreaPixels(croppedPixels);
-  }, []);
+  const [cropRect, setCropRect] = useState<CropRect>({ x: 0.05, y: 0.05, width: 0.9, height: 0.9 });
 
   // No session guard
   if (!session) {
@@ -127,8 +121,10 @@ const DataIngestion: React.FC<DataIngestionProps> = ({ session, config, onSessio
   const applyEditsAndProcess = async () => {
     if (!capturedImage) return;
 
+    const isCropped = cropRect.x > 0.01 || cropRect.y > 0.01 || cropRect.width < 0.98 || cropRect.height < 0.98;
+
     // If no crop and no rotation, process directly
-    if (!croppedAreaPixels && rotation === 0) {
+    if (!isCropped && rotation === 0) {
       processImage(capturedImage);
       return;
     }
@@ -137,26 +133,25 @@ const DataIngestion: React.FC<DataIngestionProps> = ({ session, config, onSessio
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d')!;
 
-    if (croppedAreaPixels && (croppedAreaPixels.width < img.width || croppedAreaPixels.height < img.height)) {
-      // Apply crop first, then rotation
-      const { x, y, width, height } = croppedAreaPixels;
+    // Calculate pixel crop from normalized coords
+    const sx = Math.round(cropRect.x * img.width);
+    const sy = Math.round(cropRect.y * img.height);
+    const sw = Math.round(cropRect.width * img.width);
+    const sh = Math.round(cropRect.height * img.height);
+
+    if (isCropped || rotation !== 0) {
+      const cropW = isCropped ? sw : img.width;
+      const cropH = isCropped ? sh : img.height;
       const isSwap = rotation === 90 || rotation === 270;
-      canvas.width = isSwap ? height : width;
-      canvas.height = isSwap ? width : height;
+      canvas.width = isSwap ? cropH : cropW;
+      canvas.height = isSwap ? cropW : cropH;
       ctx.translate(canvas.width / 2, canvas.height / 2);
       ctx.rotate((rotation * Math.PI) / 180);
-      ctx.drawImage(img, x, y, width, height, -width / 2, -height / 2, width, height);
-    } else if (rotation !== 0) {
-      // Rotation only
-      const isSwap = rotation === 90 || rotation === 270;
-      canvas.width = isSwap ? img.height : img.width;
-      canvas.height = isSwap ? img.width : img.height;
-      ctx.translate(canvas.width / 2, canvas.height / 2);
-      ctx.rotate((rotation * Math.PI) / 180);
-      ctx.drawImage(img, -img.width / 2, -img.height / 2);
-    } else {
-      processImage(capturedImage);
-      return;
+      if (isCropped) {
+        ctx.drawImage(img, sx, sy, sw, sh, -cropW / 2, -cropH / 2, cropW, cropH);
+      } else {
+        ctx.drawImage(img, -img.width / 2, -img.height / 2);
+      }
     }
 
     const editedUrl = canvas.toDataURL('image/jpeg', 0.85);
@@ -333,9 +328,7 @@ const DataIngestion: React.FC<DataIngestionProps> = ({ session, config, onSessio
     setScoreConfidence({});
     setScoreSource('none');
     setRotation(0);
-    setCrop({ x: 0, y: 0 });
-    setZoom(1);
-    setCroppedAreaPixels(null);
+    setCropRect({ x: 0.05, y: 0.05, width: 0.9, height: 0.9 });
     setMode('capture');
   };
 
@@ -517,50 +510,24 @@ const DataIngestion: React.FC<DataIngestionProps> = ({ session, config, onSessio
             </button>
             <h3 className="text-white font-bold text-sm">Edit Image</h3>
             <button
-              onClick={() => { setCrop({ x: 0, y: 0 }); setZoom(1); setRotation(0); }}
+              onClick={() => { setCropRect({ x: 0.05, y: 0.05, width: 0.9, height: 0.9 }); setRotation(0); }}
               className="text-slate-400 hover:text-white text-xs font-bold transition-colors"
             >
               Reset
             </button>
           </div>
 
-          {/* Cropper area */}
+          {/* Crop area with draggable handles */}
           <div className="flex-1 relative">
-            <Cropper
-              image={capturedImage}
-              crop={crop}
-              zoom={zoom}
-              rotation={rotation}
-              aspect={undefined}
-              onCropChange={setCrop}
-              onZoomChange={setZoom}
-              onCropComplete={onCropComplete}
-              showGrid={true}
-              style={{
-                containerStyle: { background: '#000' },
-                cropAreaStyle: { border: '2px solid rgba(99,102,241,0.8)' },
-              }}
+            <CropOverlay
+              imageSrc={capturedImage}
+              onCropChange={setCropRect}
+              initialCrop={cropRect}
             />
           </div>
 
           {/* Controls */}
-          <div className="p-4 pb-8 bg-black/90 space-y-3 z-10">
-            {/* Zoom slider */}
-            <div className="flex items-center gap-3">
-              <i className="fa-solid fa-magnifying-glass-minus text-slate-500 text-xs"></i>
-              <input
-                type="range"
-                min={1}
-                max={3}
-                step={0.1}
-                value={zoom}
-                onChange={e => setZoom(Number(e.target.value))}
-                className="flex-1 accent-indigo-500 h-1"
-              />
-              <i className="fa-solid fa-magnifying-glass-plus text-slate-500 text-xs"></i>
-            </div>
-
-            {/* Rotation + Analyze */}
+          <div className="p-4 pb-8 bg-black/90 z-10">
             <div className="flex items-center gap-3">
               <button
                 onClick={() => setRotation((rotation + 270) % 360)}

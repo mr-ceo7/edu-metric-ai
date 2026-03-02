@@ -3,6 +3,7 @@ import { ExamSession, ScanRecord, CornerQRData, Question, AppConfig } from '../t
 import { addScanToSession, getStudentScanProgress } from '../services/storageService';
 import { extractOMRScores, PageAnalysisResult } from '../services/geminiService';
 import { scanPageCorners, PageCompletenessResult, CornerPosition } from '../services/cornerScanner';
+import { extractOMRScoresClient, ClientOMRResult } from '../services/omrScanner';
 
 interface DataIngestionProps {
   session: ExamSession | null;
@@ -27,6 +28,8 @@ const DataIngestion: React.FC<DataIngestionProps> = ({ session, config, onSessio
   const [clientCornerResult, setClientCornerResult] = useState<PageCompletenessResult | null>(null);
   const [aiCornerResult, setAiCornerResult] = useState<PageAnalysisResult['cornerVisibility'] | null>(null);
   const [analysisWarnings, setAnalysisWarnings] = useState<string[]>([]);
+  const [scoreConfidence, setScoreConfidence] = useState<Record<number, number>>({});
+  const [scoreSource, setScoreSource] = useState<'client' | 'ai' | 'none'>('none');
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -106,13 +109,17 @@ const DataIngestion: React.FC<DataIngestionProps> = ({ session, config, onSessio
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  // ====== DUAL-LAYER PAGE PROCESSING ======
+  // ====== 3-LAYER PAGE PROCESSING ======
   const processImage = async (imageDataUrl: string) => {
     setMode('processing');
     setIsProcessing(true);
     setClientCornerResult(null);
     setAiCornerResult(null);
     setAnalysisWarnings([]);
+    setScoreConfidence({});
+    setScoreSource('none');
+
+    const allWarnings: string[] = [];
 
     try {
       // ---- LAYER 1: Client-side corner QR detection (instant) ----
@@ -136,29 +143,73 @@ const DataIngestion: React.FC<DataIngestionProps> = ({ session, config, onSessio
         };
       }
       setClientCornerResult(cornerResult);
+      allWarnings.push(...cornerResult.warnings);
 
       // Use corner data to identify student and page
       const cornerData = cornerResult.cornerData;
       const pageNum = cornerData?.pageNumber || 1;
       const questionsOnPage = session.questions.filter(q => (q.pageNumber || 1) === pageNum);
 
-      // If not all corners detected, warn but still proceed
       if (!cornerResult.allCornersDetected) {
-        setStatusMessage(`${cornerResult.cornersFound}/4 corners detected. Proceeding with AI analysis...`);
+        setStatusMessage(`${cornerResult.cornersFound}/4 corners detected. Reading OMR bubbles...`);
       } else {
-        setStatusMessage('All 4 corners detected ✓ Reading OMR scores...');
+        setStatusMessage('All 4 corners detected ✓ Reading OMR bubbles...');
       }
 
-      // ---- LAYER 2: Gemini AI — corner verification + OMR extraction ----
-      const base64 = imageDataUrl.split(',')[1];
-      const aiResult = await extractOMRScores(base64, questionsOnPage);
+      // ---- LAYER 2: Client-side OMR extraction (pixel analysis, ~200ms) ----
+      let clientScores: Record<number, number> = {};
+      let clientConfidence: Record<number, number> = {};
+      try {
+        const clientResult: ClientOMRResult = await extractOMRScoresClient(imageDataUrl, questionsOnPage);
+        clientScores = clientResult.scores;
+        clientConfidence = clientResult.confidence;
+        allWarnings.push(...clientResult.warnings);
+        console.log('[processImage] Client-side OMR scores:', clientScores, 'confidence:', clientConfidence);
+      } catch (err) {
+        console.warn('[processImage] Client-side OMR failed:', err);
+        allWarnings.push('Client-side OMR extraction failed.');
+        // Initialize to zeros
+        questionsOnPage.forEach(q => { clientScores[q.id] = 0; clientConfidence[q.id] = 0; });
+      }
 
-      setAiCornerResult(aiResult.cornerVisibility);
-      setAnalysisWarnings([...cornerResult.warnings, ...aiResult.warnings]);
+      // Use client scores as initial values
+      let finalScores = { ...clientScores };
+      let finalConfidence = { ...clientConfidence };
+      let source: 'client' | 'ai' | 'none' = 'client';
+
+      // ---- LAYER 3: AI OMR validation (optional, may fail) ----
+      setStatusMessage('Verifying with AI...');
+      try {
+        const base64 = imageDataUrl.split(',')[1];
+        const aiResult = await extractOMRScores(base64, questionsOnPage);
+
+        setAiCornerResult(aiResult.cornerVisibility);
+        allWarnings.push(...aiResult.warnings);
+
+        // Only override client scores if AI produced meaningful results
+        // (not the default all-zeros from failed parsing)
+        const aiHasRealScores = Object.values(aiResult.scores).some(s => s > 0);
+        if (aiHasRealScores) {
+          finalScores = aiResult.scores;
+          finalConfidence = {};
+          questionsOnPage.forEach(q => { finalConfidence[q.id] = 0.95; });
+          source = 'ai';
+          console.log('[processImage] AI scores override:', finalScores);
+        } else {
+          console.log('[processImage] AI returned defaults, keeping client-side scores:', finalScores);
+          allWarnings.push('AI returned default scores — keeping client-side OMR results.');
+        }
+      } catch (aiErr) {
+        console.warn('[processImage] AI OMR failed, using client-side scores:', aiErr);
+        allWarnings.push('AI analysis unavailable — using client-side OMR scores. Please verify carefully.');
+      }
 
       setDecodedCorner(cornerData);
       setPageQuestions(questionsOnPage);
-      setExtractedScores(aiResult.scores);
+      setExtractedScores(finalScores);
+      setScoreConfidence(finalConfidence);
+      setScoreSource(source);
+      setAnalysisWarnings(allWarnings);
       setMode('confirm');
       setStatusMessage('');
     } catch (err) {
@@ -215,6 +266,8 @@ const DataIngestion: React.FC<DataIngestionProps> = ({ session, config, onSessio
     setClientCornerResult(null);
     setAiCornerResult(null);
     setAnalysisWarnings([]);
+    setScoreConfidence({});
+    setScoreSource('none');
     setMode('capture');
   };
 
@@ -593,38 +646,60 @@ const DataIngestion: React.FC<DataIngestionProps> = ({ session, config, onSessio
 
           {/* Score Review */}
           <div className="glass rounded-2xl overflow-hidden border border-white/10">
-            <div className="p-4 bg-white/5 border-b border-white/5">
+            <div className="p-4 bg-white/5 border-b border-white/5 flex items-center justify-between">
               <h3 className="font-bold text-white text-sm flex items-center">
                 <i className="fa-solid fa-list-check text-indigo-400 mr-2"></i>
                 Review Extracted Scores
               </h3>
+              <span className={`text-[10px] font-black px-3 py-1 rounded-full ${
+                scoreSource === 'ai'
+                  ? 'bg-emerald-500/20 text-emerald-400'
+                  : scoreSource === 'client'
+                  ? 'bg-amber-500/20 text-amber-400'
+                  : 'bg-slate-700 text-slate-400'
+              }`}>
+                {scoreSource === 'ai' ? 'AI VERIFIED' : scoreSource === 'client' ? 'CLIENT OMR — VERIFY' : 'MANUAL ENTRY'}
+              </span>
             </div>
             <div className="divide-y divide-white/5">
-              {pageQuestions.map(q => (
-                <div key={q.id} className="p-4 flex items-center justify-between hover:bg-white/2">
-                  <div className="space-y-1 flex-1">
-                    <span className="text-[10px] text-indigo-400 font-black uppercase tracking-widest">
-                      Question {q.id}
-                    </span>
-                    <div className="text-white font-bold text-sm">{q.topic}</div>
-                    <div className="text-[11px] text-slate-500">{q.subTopic}</div>
+              {pageQuestions.map(q => {
+                const conf = scoreConfidence[q.id] ?? 0;
+                const borderColor = conf >= 0.7 ? 'border-l-emerald-500' : conf >= 0.3 ? 'border-l-amber-500' : 'border-l-rose-500';
+                return (
+                  <div key={q.id} className={`p-4 flex items-center justify-between hover:bg-white/[0.02] border-l-4 ${borderColor}`}>
+                    <div className="space-y-1 flex-1">
+                      <div className="flex items-center space-x-2">
+                        <span className="text-[10px] text-indigo-400 font-black uppercase tracking-widest">
+                          Question {q.id}
+                        </span>
+                        {conf < 0.3 && (
+                          <span className="text-[9px] text-rose-400 font-bold bg-rose-500/10 px-2 py-0.5 rounded-full">
+                            LOW CONFIDENCE
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-white font-bold text-sm">{q.topic}</div>
+                      <div className="text-[11px] text-slate-500">{q.subTopic}</div>
+                    </div>
+                    <div className="flex items-center space-x-3">
+                      <input
+                        type="number"
+                        min={0}
+                        max={q.maxScore}
+                        value={extractedScores[q.id] ?? 0}
+                        onChange={e => {
+                          const val = Math.min(Math.max(0, parseFloat(e.target.value) || 0), q.maxScore);
+                          setExtractedScores({ ...extractedScores, [q.id]: val });
+                        }}
+                        className={`w-16 bg-slate-950 border rounded-xl px-2 py-2 text-white text-center font-black focus:border-indigo-500 outline-none ${
+                          conf < 0.3 ? 'border-rose-500/50' : 'border-white/10'
+                        }`}
+                      />
+                      <span className="text-slate-600 text-xs font-bold">/ {q.maxScore}</span>
+                    </div>
                   </div>
-                  <div className="flex items-center space-x-3">
-                    <input
-                      type="number"
-                      min={0}
-                      max={q.maxScore}
-                      value={extractedScores[q.id] ?? 0}
-                      onChange={e => {
-                        const val = Math.min(Math.max(0, parseFloat(e.target.value) || 0), q.maxScore);
-                        setExtractedScores({ ...extractedScores, [q.id]: val });
-                      }}
-                      className="w-16 bg-slate-950 border border-white/10 rounded-xl px-2 py-2 text-white text-center font-black focus:border-indigo-500 outline-none"
-                    />
-                    <span className="text-slate-600 text-xs font-bold">/ {q.maxScore}</span>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 

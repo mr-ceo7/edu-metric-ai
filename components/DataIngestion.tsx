@@ -1,4 +1,5 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
+import Cropper, { Area } from 'react-easy-crop';
 import { ExamSession, ScanRecord, CornerQRData, Question, AppConfig } from '../types';
 import { addScanToSession, getStudentScanProgress } from '../services/storageService';
 import { extractOMRScores, PageAnalysisResult } from '../services/geminiService';
@@ -12,7 +13,7 @@ interface DataIngestionProps {
 }
 
 const DataIngestion: React.FC<DataIngestionProps> = ({ session, config, onSessionUpdated }) => {
-  const [mode, setMode] = useState<'capture' | 'processing' | 'confirm' | 'history'>('capture');
+  const [mode, setMode] = useState<'capture' | 'edit' | 'processing' | 'confirm' | 'history'>('capture');
   const [isProcessing, setIsProcessing] = useState(false);
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [decodedCorner, setDecodedCorner] = useState<CornerQRData | null>(null);
@@ -35,6 +36,17 @@ const DataIngestion: React.FC<DataIngestionProps> = ({ session, config, onSessio
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const editCanvasRef = useRef<HTMLCanvasElement>(null);
+
+  // Edit state
+  const [rotation, setRotation] = useState(0); // 0, 90, 180, 270
+  const [crop, setCrop] = useState({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1);
+  const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null);
+
+  const onCropComplete = useCallback((_croppedArea: Area, croppedPixels: Area) => {
+    setCroppedAreaPixels(croppedPixels);
+  }, []);
 
   // No session guard
   if (!session) {
@@ -92,7 +104,8 @@ const DataIngestion: React.FC<DataIngestionProps> = ({ session, config, onSessio
       const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
       stopCamera();
       setCapturedImage(dataUrl);
-      processImage(dataUrl);
+      setRotation(0);
+      setMode('edit');
     }
   };
 
@@ -103,11 +116,62 @@ const DataIngestion: React.FC<DataIngestionProps> = ({ session, config, onSessio
     reader.onload = (event) => {
       const dataUrl = event.target?.result as string;
       setCapturedImage(dataUrl);
-      processImage(dataUrl);
+      setRotation(0);
+      setMode('edit');
     };
     reader.readAsDataURL(file);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
+
+  // Apply crop + rotation to the captured image and start processing
+  const applyEditsAndProcess = async () => {
+    if (!capturedImage) return;
+
+    // If no crop and no rotation, process directly
+    if (!croppedAreaPixels && rotation === 0) {
+      processImage(capturedImage);
+      return;
+    }
+
+    const img = await loadImageEl(capturedImage);
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d')!;
+
+    if (croppedAreaPixels && (croppedAreaPixels.width < img.width || croppedAreaPixels.height < img.height)) {
+      // Apply crop first, then rotation
+      const { x, y, width, height } = croppedAreaPixels;
+      const isSwap = rotation === 90 || rotation === 270;
+      canvas.width = isSwap ? height : width;
+      canvas.height = isSwap ? width : height;
+      ctx.translate(canvas.width / 2, canvas.height / 2);
+      ctx.rotate((rotation * Math.PI) / 180);
+      ctx.drawImage(img, x, y, width, height, -width / 2, -height / 2, width, height);
+    } else if (rotation !== 0) {
+      // Rotation only
+      const isSwap = rotation === 90 || rotation === 270;
+      canvas.width = isSwap ? img.height : img.width;
+      canvas.height = isSwap ? img.width : img.height;
+      ctx.translate(canvas.width / 2, canvas.height / 2);
+      ctx.rotate((rotation * Math.PI) / 180);
+      ctx.drawImage(img, -img.width / 2, -img.height / 2);
+    } else {
+      processImage(capturedImage);
+      return;
+    }
+
+    const editedUrl = canvas.toDataURL('image/jpeg', 0.85);
+    setCapturedImage(editedUrl);
+    processImage(editedUrl);
+  };
+
+  function loadImageEl(src: string): Promise<HTMLImageElement> {
+    return new Promise((resolve, reject) => {
+      const img = new window.Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = src;
+    });
+  }
 
   // ====== 3-LAYER PAGE PROCESSING ======
   const processImage = async (imageDataUrl: string) => {
@@ -268,6 +332,10 @@ const DataIngestion: React.FC<DataIngestionProps> = ({ session, config, onSessio
     setAnalysisWarnings([]);
     setScoreConfidence({});
     setScoreSource('none');
+    setRotation(0);
+    setCrop({ x: 0, y: 0 });
+    setZoom(1);
+    setCroppedAreaPixels(null);
     setMode('capture');
   };
 
@@ -432,6 +500,89 @@ const DataIngestion: React.FC<DataIngestionProps> = ({ session, config, onSessio
             </div>
           </div>
           )}
+        </div>
+      )}
+
+      {/* Edit Mode — crop/rotate before analysis */}
+      {mode === 'edit' && capturedImage && (
+        <div className="fixed inset-0 z-50 bg-black flex flex-col" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0 }}>
+          {/* Header */}
+          <div className="flex items-center justify-between p-3 bg-black/80 z-10">
+            <button
+              onClick={resetState}
+              className="text-slate-400 hover:text-white text-sm font-bold flex items-center space-x-2 transition-colors"
+            >
+              <i className="fa-solid fa-arrow-left"></i>
+              <span>Discard</span>
+            </button>
+            <h3 className="text-white font-bold text-sm">Edit Image</h3>
+            <button
+              onClick={() => { setCrop({ x: 0, y: 0 }); setZoom(1); setRotation(0); }}
+              className="text-slate-400 hover:text-white text-xs font-bold transition-colors"
+            >
+              Reset
+            </button>
+          </div>
+
+          {/* Cropper area */}
+          <div className="flex-1 relative">
+            <Cropper
+              image={capturedImage}
+              crop={crop}
+              zoom={zoom}
+              rotation={rotation}
+              aspect={undefined}
+              onCropChange={setCrop}
+              onZoomChange={setZoom}
+              onCropComplete={onCropComplete}
+              showGrid={true}
+              style={{
+                containerStyle: { background: '#000' },
+                cropAreaStyle: { border: '2px solid rgba(99,102,241,0.8)' },
+              }}
+            />
+          </div>
+
+          {/* Controls */}
+          <div className="p-4 pb-8 bg-black/90 space-y-3 z-10">
+            {/* Zoom slider */}
+            <div className="flex items-center gap-3">
+              <i className="fa-solid fa-magnifying-glass-minus text-slate-500 text-xs"></i>
+              <input
+                type="range"
+                min={1}
+                max={3}
+                step={0.1}
+                value={zoom}
+                onChange={e => setZoom(Number(e.target.value))}
+                className="flex-1 accent-indigo-500 h-1"
+              />
+              <i className="fa-solid fa-magnifying-glass-plus text-slate-500 text-xs"></i>
+            </div>
+
+            {/* Rotation + Analyze */}
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setRotation((rotation + 270) % 360)}
+                className="w-12 h-12 bg-white/10 hover:bg-white/20 text-white rounded-xl flex items-center justify-center transition-all active:scale-95"
+              >
+                <i className="fa-solid fa-rotate-left"></i>
+              </button>
+              <button
+                onClick={() => setRotation((rotation + 90) % 360)}
+                className="w-12 h-12 bg-white/10 hover:bg-white/20 text-white rounded-xl flex items-center justify-center transition-all active:scale-95"
+              >
+                <i className="fa-solid fa-rotate-right"></i>
+              </button>
+              <button
+                onClick={applyEditsAndProcess}
+                className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-black shadow-xl shadow-indigo-500/30 active:scale-[0.97] flex items-center justify-center space-x-2 transition-all"
+              >
+                <i className="fa-solid fa-magnifying-glass-chart"></i>
+                <span>Analyze</span>
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

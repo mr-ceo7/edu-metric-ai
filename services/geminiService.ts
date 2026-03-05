@@ -134,7 +134,7 @@ export const extractOMRScores = async (
   base64Image: string,
   questions: Question[]
 ): Promise<PageAnalysisResult> => {
-  const model = 'gemini-2.0-flash';
+  const model = 'gemini-2.5-flash';
 
   const questionContext = questions.map(q =>
     `Question ${q.id}: Topic "${q.topic}", Concept "${q.subTopic}", Max Score: ${q.maxScore}`
